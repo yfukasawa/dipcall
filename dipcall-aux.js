@@ -42,16 +42,18 @@ var getopt = function(args, ostr) {
 
 function vcfpair(args)
 {
-	var c, is_male = false, sample = 'syndip', fn_par = null, par = null, all_ctg = false;
-	while ((c = getopt(args, "ams:p:")) != null) {
+    var c, is_male = false, sample = 'syndip', fn_par = null, par = null, all_ctg = false, ploidy = 2;
+	while ((c = getopt(args, "ams:p:q:")) != null) {
 		if (c == 's') sample = getopt.arg;
 		else if (c == 'p') fn_par = getopt.arg, is_male = true;
 		else if (c == 'a') all_ctg = true;
+		else if (c == 'q') ploidy  = parseInt(getopt.arg, 10);   
 	}
 	if (getopt.ind == args.length) {
 		print("Usage: dipcall-aux.js vcfpair [options] <in.pair.vcf>");
 		print("Options:");
 		print("  -p FILE  chrX PAR; assuming male sample []");
+		print("  -q INT   ploidy level. default assumes diplod.");
 		print("  -s STR   sample name [" + sample + "]");
 		print("  -a       call on all contigs regardless of naming");
 		exit(1);
@@ -71,7 +73,10 @@ function vcfpair(args)
 	}
 
 	var re_ctg = all_ctg? /^\S+$/ : is_male? /^(chr)?([0-9]+|X|Y)$/ : /^(chr)?([0-9]+|X)$/;
-	var label = ['1', '2'];
+	var label = new Array(ploidy);
+	for (var i=0; i<ploidy; i++){
+		label[i] = String(i + 1);
+	}
 	var buf = new Bytes();
 	var file = args[getopt.ind] == '-'? new File() : new File(args[getopt.ind]);
 	while (file.readline(buf) >= 0) {
@@ -82,13 +87,13 @@ function vcfpair(args)
 				if (!re_ctg.test(m[1])) continue;
 			} else if (/^#CHROM/.test(line)) {
 				var t = line.split("\t");
-				--t.length;
+				t.length -= (ploidy - 1);
 				t[t.length-1] = sample;
-				line = t.join("\t");
-				print('##FILTER=<ID=HET1,Description="Heterozygous in the first haplotype">');
-				print('##FILTER=<ID=HET2,Description="Heterozygous in the second haplotype">');
-				print('##FILTER=<ID=GAP1,Description="Uncalled in the first haplotype">');
-				print('##FILTER=<ID=GAP2,Description="Uncalled in the second haplotype">');
+			  line = t.join("\t");
+				for (var i=1; i<ploidy+1; ++i){
+					print('##FILTER=<ID=HET'+String(i)+',Description="Heterozygous in the haplotype '+String(i)+'">');
+					print('##FILTER=<ID=GAP'+String(i)+',Description="Uncalled in the haplotype '+String(i)+'">');
+				}
 				if (is_male) {
 					print('##FILTER=<ID=DIPX,Description="Diploid chrX in non-PAR">');
 					print('##FILTER=<ID=DIPY,Description="Diploid chrY in non-PAR">');
@@ -100,8 +105,10 @@ function vcfpair(args)
 		var t = line.split("\t");
 		if (/N/.test(t[4])) continue;
 		if (!re_ctg.test(t[0])) continue;
-		var GT = null, AD = null, FILTER = [], HT = [null, null];
-		for (var i = 0; i < 2; ++i) {
+		var GT = null, AD = null, FILTER = [], HT = new Array(ploidy);
+		for (var i=0; i<ploidy; i++) HT[i] = null;
+		//for (var i = 0; i < 2; ++i) { // ref or alt AND haplotype. needs a split.
+		for (var i = 0; i < ploidy; ++i) {
 			if ((m = /^(\.|[0-9]+)\/(\.|[0-9]+):(\S+)/.exec(t[9+i])) == null) {
 				warn(line);
 				throw Error("malformatted VCF");
@@ -149,6 +156,7 @@ function vcfpair(args)
 		t[5] = 30; // fake QUAL
 		t[6] = FILTER.length? FILTER.join(";") : ".";
 		t[9] = HT.join("|") + ":" + AD.join(",");
+		if (t.length > 10) t.length = 10;
 		print(t.join("\t"));
 	}
 	file.close();
